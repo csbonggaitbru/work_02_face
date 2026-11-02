@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบเช็คชื่ออัตโนมัติด้วยใบหน้า (Face Attendance Kiosk)</title>
+    <!-- Google Fonts: Kanit -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- TensorFlow.js & Teachable Machine Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --dark: #0f172a;
+            --card-bg: #ffffff;
+            --bg: #f8fafc;
+            --border: #e2e8f0;
+            --text-main: #1e293b;
+            --text-muted: #64748b;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Kanit', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header Bar */
+        header {
+            background: linear-gradient(135deg, #1e293b, #0f172a);
+            color: #ffffff;
+            padding: 1rem 1.25rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-title h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .header-title .badge {
+            background: rgba(37, 99, 235, 0.3);
+            border: 1px solid #3b82f6;
+            color: #93c5fd;
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 999px;
+        }
+
+        .live-clock {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .clock-time {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #38bdf8;
+        }
+
+        .clock-date {
+            font-size: 0.75rem;
+            color: #94a3b8;
+        }
+
+        /* Main Container */
+        .container {
+            max-width: 1200px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 1rem;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1.25rem;
+            flex: 1;
+        }
+
+        @media (min-width: 992px) {
+            .container {
+                grid-template-columns: 480px 1fr;
+            }
+        }
+
+        /* Card Component */
+        .card {
+            background: var(--card-bg);
+            border-radius: 16px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+            border: 1px solid var(--border);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .card-header {
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #ffffff;
+        }
+
+        .card-title {
+            font-size: 1.05rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Camera Box */
+        .camera-card {
+            position: relative;
+        }
+
+        .camera-wrapper {
+            position: relative;
+            background: #000000;
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            border-radius: 0 0 16px 16px;
+        }
+
+        #webcam-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #webcam-container canvas {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror view */
+            transition: all 0.3s ease;
+        }
+
+        /* Camera Flash Overlay for Check-in Feedback */
+        .camera-wrapper.success-flash {
+            outline: 8px solid var(--success);
+            outline-offset: -8px;
+            animation: pulse-green 1s ease-out;
+        }
+
+        .camera-wrapper.warn-flash {
+            outline: 8px solid var(--warning);
+            outline-offset: -8px;
+            animation: pulse-yellow 1s ease-out;
+        }
+
+        @keyframes pulse-green {
+            0% { box-shadow: inset 0 0 40px rgba(16, 185, 129, 0.9); }
+            100% { box-shadow: inset 0 0 0px rgba(16, 185, 129, 0); }
+        }
+
+        @keyframes pulse-yellow {
+            0% { box-shadow: inset 0 0 40px rgba(245, 158, 11, 0.9); }
+            100% { box-shadow: inset 0 0 0px rgba(245, 158, 11, 0); }
+        }
+
+        /* Scanner Target Animation */
+        .scan-overlay {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .scan-frame {
+            width: 65%;
+            height: 65%;
+            border: 2px dashed rgba(255, 255, 255, 0.4);
+            border-radius: 24px;
+            position: relative;
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+        }
+
+        .scan-laser {
+            position: absolute;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, #38bdf8, transparent);
+            box-shadow: 0 0 10px #38bdf8;
+            top: 0;
+            animation: scan-move 2.2s infinite ease-in-out;
+        }
+
+        @keyframes scan-move {
+            0% { top: 5%; opacity: 0.2; }
+            50% { opacity: 1; }
+            100% { top: 95%; opacity: 0.2; }
+        }
+
+        /* Overlay Notification Banner */
+        .toast-banner {
+            position: absolute;
+            bottom: 16px;
+            left: 16px;
+            right: 16px;
+            padding: 12px 16px;
+            border-radius: 12px;
+            color: #fff;
+            font-size: 0.95rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transform: translateY(120%);
+            opacity: 0;
+            transition: all 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 10;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+        }
+
+        .toast-banner.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast-banner.success {
+            background: rgba(16, 185, 129, 0.95);
+        }
+
+        .toast-banner.warning {
+            background: rgba(245, 158, 11, 0.95);
+        }
+
+        /* Camera Controls */
+        .camera-controls {
+            padding: 1rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            background: #ffffff;
+            border-top: 1px solid var(--border);
+        }
+
+        .btn {
+            padding: 0.65rem 1.25rem;
+            border-radius: 10px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: #ffffff;
+            flex: 1;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-main);
+        }
+
+        .btn-outline:hover {
+            background: #f1f5f9;
+        }
+
+        .btn-danger-outline {
+            background: transparent;
+            border: 1px solid #fecaca;
+            color: var(--danger);
+        }
+
+        .btn-danger-outline:hover {
+            background: #fef2f2;
+        }
+
+        /* Realtime Probabilities Bar */
+        .prob-section {
+            padding: 0.75rem 1.25rem;
+            background: #f8fafc;
+            border-top: 1px solid var(--border);
+        }
+
+        .prob-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            margin-bottom: 4px;
+            color: var(--text-muted);
+        }
+
+        .prob-bar-bg {
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 999px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+
+        .prob-bar-fill {
+            height: 100%;
+            background: var(--primary);
+            border-radius: 999px;
+            transition: width 0.15s ease;
+            width: 0%;
+        }
+
+        /* Right Panel: Stats & Attendance Log */
+        .content-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }
+
+        /* Stats Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+
+        .stat-card {
+            background: #ffffff;
+            padding: 1rem;
+            border-radius: 14px;
+            border: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .stat-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.4rem;
+        }
+
+        .stat-blue { background: #dbeafe; color: #1d4ed8; }
+        .stat-green { background: #d1fae5; color: #047857; }
+
+        .stat-info .stat-value {
+            font-size: 1.4rem;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+
+        .stat-info .stat-title {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        /* Settings Bar */
+        .settings-bar {
+            background: #ffffff;
+            padding: 0.75rem 1.25rem;
+            border-radius: 14px;
+            border: 1px solid var(--border);
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            font-size: 0.9rem;
+        }
+
+        .settings-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        select.custom-select {
+            padding: 6px 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: #f8fafc;
+            color: var(--text-main);
+            font-size: 0.85rem;
+            outline: none;
+        }
+
+        /* Attendance History Table */
+        .table-card {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .table-responsive {
+            overflow-x: auto;
+            max-height: 420px;
+            flex: 1;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.9rem;
+        }
+
+        thead th {
+            position: sticky;
+            top: 0;
+            background: #f8fafc;
+            color: var(--text-muted);
+            font-weight: 500;
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+        }
+
+        tbody tr {
+            border-bottom: 1px solid #f1f5f9;
+            transition: background 0.15s ease;
+        }
+
+        tbody tr:hover {
+            background: #f8fafc;
+        }
+
+        tbody td {
+            padding: 12px 14px;
+            white-space: nowrap;
+        }
+
+        .name-badge {
+            font-weight: 600;
+            color: #1e293b;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .confidence-tag {
+            background: #ecfdf5;
+            color: #065f46;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        .empty-state {
+            padding: 3rem 1rem;
+            text-align: center;
+            color: var(--text-muted);
+        }
+
+        .empty-state span {
+            font-size: 2.5rem;
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        /* Status Dot */
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .status-online { background-color: var(--success); box-shadow: 0 0 8px var(--success); }
+        .status-standby { background-color: var(--warning); }
+        .status-offline { background-color: var(--danger); }
+    </style>
+</head>
+<body>
+
+    <!-- Header Section -->
+    <header>
+        <div class="header-title">
+            <span class="status-dot status-offline" id="status-indicator"></span>
+            <h1>ระบบเช็คชื่อด้วยใบหน้า</h1>
+            <span class="badge">Walk-through Kiosk</span>
+        </div>
+        <div class="live-clock">
+            <div class="clock-time" id="clock-time">--:--:--</div>
+            <div class="clock-date" id="clock-date">กำลังโหลด...</div>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Left Column: Camera and AI Recognition -->
+        <div class="card camera-card">
+            <div class="card-header">
+                <span class="card-title">
+                    📷 สแกนเนอร์ใบหน้า
+                </span>
+                <span id="camera-status-text" style="font-size: 0.85rem; color: var(--text-muted);">
+                    ยังไม่ได้เริ่มกล้อง
+                </span>
+            </div>
+
+            <!-- Video / Canvas Container -->
+            <div class="camera-wrapper" id="camera-wrapper">
+                <div id="webcam-container"></div>
+                <div class="scan-overlay" id="scan-overlay" style="display: none;">
+                    <div class="scan-frame">
+                        <div class="scan-laser"></div>
+                    </div>
+                </div>
+
+                <!-- Toast Banner for Instant Alert -->
+                <div class="toast-banner" id="toast-banner">
+                    <span id="toast-icon" style="font-size: 1.4rem;">✅</span>
+                    <div>
+                        <div style="font-weight: 600;" id="toast-title">เช็คชื่อสำเร็จ</div>
+                        <div style="font-size: 0.8rem; opacity: 0.9;" id="toast-desc">คุณเปรม</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Confidence Progress Bars -->
+            <div class="prob-section" id="prob-container">
+                <div style="font-size: 0.8rem; color: var(--text-muted); text-align: center;">
+                    กดปุ่ม "เริ่มระบบเช็คชื่อ" เพื่อเปิดกล้อง
+                </div>
+            </div>
+
+            <!-- Camera Controls -->
+            <div class="camera-controls">
+                <button class="btn btn-primary" id="btn-start" onclick="toggleSystem()">
+                    ▶ เริ่มระบบเช็คชื่อ
+                </button>
+                <button class="btn btn-outline" id="btn-sound" onclick="toggleSound()" title="เปิด/ปิดเสียงพูด">
+                    🔊 เสียง: เปิด
+                </button>
+            </div>
+        </div>
+
+        <!-- Right Column: Dashboard & Attendance Log -->
+        <div class="content-panel">
+            <!-- Stats Summary -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon stat-blue">👥</div>
+                    <div class="stat-info">
+                        <div class="stat-value" id="stat-total-count">0</div>
+                        <div class="stat-title">เช็คชื่อแล้ววันนี้ (ครั้ง)</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon stat-green">⏱️</div>
+                    <div class="stat-info">
+                        <div class="stat-value" style="font-size: 1rem; font-weight:600;" id="stat-last-person">-</div>
+                        <div class="stat-title" id="stat-last-time">คนล่าสุด</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Bar -->
+            <div class="settings-bar">
+                <div class="settings-group">
+                    <span>⏳ ระยะเวลาพัก (Cooldown):</span>
+                    <select class="custom-select" id="select-cooldown" onchange="updateCooldown(this.value)">
+                        <option value="1">1 นาที (สำหรับทดสอบ)</option>
+                        <option value="5" selected>5 นาที (มาตรฐาน)</option>
+                        <option value="30">30 นาที</option>
+                        <option value="720">12 ชั่วโมง (วันละครั้ง)</option>
+                    </select>
+                </div>
+                <div class="settings-group">
+                    <span>🎯 ความแม่นยำขั้นต่ำ:</span>
+                    <select class="custom-select" id="select-threshold" onchange="updateThreshold(this.value)">
+                        <option value="0.80">80%</option>
+                        <option value="0.85" selected>85% (แนะนำ)</option>
+                        <option value="0.90">90% (เข้มงวด)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- History Table -->
+            <div class="card table-card">
+                <div class="card-header">
+                    <span class="card-title">
+                        📋 ประวัติการเช็คชื่อ
+                    </span>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-outline" style="padding: 0.4rem 0.8rem; font-size: 0.85rem;" onclick="exportToCSV()" title="ดาวน์โหลดเป็นไฟล์ Excel">
+                            📥 ส่งออก CSV
+                        </button>
+                        <button class="btn btn-danger-outline" style="padding: 0.4rem 0.8rem; font-size: 0.85rem;" onclick="clearAllRecords()" title="ล้างประวัติทั้งหมด">
+                            🗑️ ล้างข้อมูล
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table id="attendance-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>ชื่อ - นามสกุล</th>
+                                <th>วันที่</th>
+                                <th>เวลา</th>
+                                <th>ความแม่นยำ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="attendance-tbody">
+                            <!-- Rows will be dynamically rendered here -->
+                        </tbody>
+                    </table>
+                    <div class="empty-state" id="empty-state">
+                        <span>🚶‍♂️</span>
+                        ยังไม่มีประวัติการเช็คชื่อ เดินผ่านหน้ากล้องเพื่อเช็คชื่อ
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script Logic -->
+    <script type="text/javascript">
+        // --- 1. System Constants & Configurations ---
+        const MODEL_URL = "https://teachablemachine.withgoogle.com/models/RyJZdLlvnA/";
+        const STORAGE_KEY = "face_attendance_records_v1";
+
+        let model, webcam, maxPredictions;
+        let isRunning = false;
+        let isSoundEnabled = true;
+        let confidenceThreshold = 0.85;
+        let cooldownMinutes = 5;
+
+        // Anti-flicker / Consecutive frames counter
+        let consecutiveMatches = {};
+        const REQUIRED_CONSECUTIVE_FRAMES = 3;
+
+        // Attendance records stored in localStorage
+        let records = [];
+
+        // Track last check-in timestamp per person { "เปรม": 1698888888000 }
+        let lastCheckedMap = {};
+
+        // --- 2. Initialization & Clock ---
+        window.addEventListener("DOMContentLoaded", () => {
+            initClock();
+            loadRecords();
+            renderTable();
+            updateStats();
+        });
+
+        function initClock() {
+            function update() {
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString('th-TH', { hour12: false });
+                const dateStr = now.toLocaleDateString('th-TH', { 
+                    weekday: 'long', 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                });
+                document.getElementById("clock-time").textContent = timeStr;
+                document.getElementById("clock-date").textContent = dateStr;
+            }
+            update();
+            setInterval(update, 1000);
+        }
+
+        // --- 3. Camera & AI Engine ---
+        async function toggleSystem() {
+            const btn = document.getElementById("btn-start");
+            if (!isRunning) {
+                btn.disabled = true;
+                btn.innerHTML = "⏳ กำลังโหลดโมเดล...";
+                await startSystem();
+                btn.disabled = false;
+                btn.innerHTML = "⏹ หยุดระบบ";
+                btn.classList.remove("btn-primary");
+                btn.classList.add("btn-danger-outline");
+            } else {
+                stopSystem();
+                btn.innerHTML = "▶ เริ่มระบบเช็คชื่อ";
+                btn.classList.remove("btn-danger-outline");
+                btn.classList.add("btn-primary");
+            }
+        }
+
+        async function startSystem() {
+            try {
+                const modelURL = MODEL_URL + "model.json";
+                const metadataURL = MODEL_URL + "metadata.json";
+
+                // Load Teachable Machine Model
+                model = await tmImage.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
+
+                // Setup Webcam (Standard 400x400, flipped for front mirror)
+                const flip = true;
+                webcam = new tmImage.Webcam(400, 400, flip);
+                await webcam.setup(); // request access to camera
+                await webcam.play();
+
+                // Mount webcam to DOM
+                const container = document.getElementById("webcam-container");
+                container.innerHTML = "";
+                container.appendChild(webcam.canvas);
+
+                // Setup Dynamic Progress Bars
+                setupProbabilityBars();
+
+                // UI Indicators
+                document.getElementById("scan-overlay").style.display = "flex";
+                document.getElementById("status-indicator").className = "status-dot status-online";
+                document.getElementById("camera-status-text").textContent = "🟢 ระบบพร้อมสแกนต่อเนื่อง";
+
+                isRunning = true;
+                window.requestAnimationFrame(loop);
+            } catch (err) {
+                console.error("Camera/Model setup error:", err);
+                alert("ไม่สามารถเข้าถึงกล้องหรือโหลดโมเดลได้:\n" + err.message + "\n\nคำแนะนำ: กรุณาอนุญาตสิทธิ์การเข้าถึงกล้อง (Camera Permission)");
+                document.getElementById("btn-start").innerHTML = "▶ เริ่มระบบเช็คชื่อ";
+                document.getElementById("btn-start").disabled = false;
+            }
+        }
+
+        function stopSystem() {
+            isRunning = false;
+            if (webcam) {
+                webcam.stop();
+            }
+            document.getElementById("scan-overlay").style.display = "none";
+            document.getElementById("status-indicator").className = "status-dot status-offline";
+            document.getElementById("camera-status-text").textContent = "🔴 ปิดระบบแล้ว";
+        }
+
+        function setupProbabilityBars() {
+            const probContainer = document.getElementById("prob-container");
+            probContainer.innerHTML = "";
+            for (let i = 0; i < maxPredictions; i++) {
+                const className = model.getClassLabels()[i];
+                const barWrapper = document.createElement("div");
+                barWrapper.innerHTML = `
+                    <div class="prob-label">
+                        <span>${className}</span>
+                        <span id="prob-text-${i}">0%</span>
+                    </div>
+                    <div class="prob-bar-bg">
+                        <div class="prob-bar-fill" id="prob-fill-${i}"></div>
+                    </div>
+                `;
+                probContainer.appendChild(barWrapper);
+            }
+        }
+
+        async function loop() {
+            if (!isRunning) return;
+            webcam.update();
+            await predict();
+            window.requestAnimationFrame(loop);
+        }
+
+        // --- 4. Prediction & Automatic Walk-through Attendance ---
+        async function predict() {
+            const prediction = await model.predict(webcam.canvas);
+            
+            let topClass = null;
+            let topProb = 0;
+
+            for (let i = 0; i < maxPredictions; i++) {
+                const prob = prediction[i].probability;
+                const percent = Math.round(prob * 100);
+                
+                // Update Progress bars
+                const textEl = document.getElementById(`prob-text-${i}`);
+                const fillEl = document.getElementById(`prob-fill-${i}`);
+                if (textEl && fillEl) {
+                    textEl.textContent = `${percent}%`;
+                    fillEl.style.width = `${percent}%`;
+                }
+
+                if (prob > topProb) {
+                    topProb = prob;
+                    topClass = prediction[i].className;
+                }
+            }
+
+            // Check if top prediction exceeds confidence threshold
+            if (topClass && topProb >= confidenceThreshold) {
+                consecutiveMatches[topClass] = (consecutiveMatches[topClass] || 0) + 1;
+
+                // When face is recognized steadily across required frames
+                if (consecutiveMatches[topClass] >= REQUIRED_CONSECUTIVE_FRAMES) {
+                    handleDetection(topClass, topProb);
+                    consecutiveMatches = {}; // Reset counter
+                }
+            } else {
+                consecutiveMatches = {};
+            }
+        }
+
+        // --- 5. Detection, Cooldown & Attendance Record ---
+        function handleDetection(personName, probability) {
+            const now = Date.now();
+            const lastTime = lastCheckedMap[personName] || 0;
+            const cooldownMs = cooldownMinutes * 60 * 1000;
+
+            // Check if within cooldown period
+            if (now - lastTime < cooldownMs) {
+                const remainingSec = Math.ceil((cooldownMs - (now - lastTime)) / 1000);
+                showToast("warning", "⚠️ เช็คชื่อไปแล้ว", `คุณ${personName} ได้เช็คชื่อเรียบร้อยแล้ว (รออีก ${remainingSec} วินาที)`);
+                flashCamera("warn");
+                return;
+            }
+
+            // Record attendance!
+            lastCheckedMap[personName] = now;
+            const recordDate = new Date();
+            const timeStr = recordDate.toLocaleTimeString('th-TH', { hour12: false });
+            const dateStr = recordDate.toLocaleDateString('th-TH');
+
+            const newRecord = {
+                id: now,
+                name: personName,
+                date: dateStr,
+                time: timeStr,
+                confidence: Math.round(probability * 100)
+            };
+
+            // Prepend new record
+            records.unshift(newRecord);
+            saveRecords();
+            renderTable();
+            updateStats();
+
+            // Visual and Audio feedback
+            flashCamera("success");
+            showToast("success", "✅ เช็คชื่อสำเร็จ!", `คุณ${personName} (${timeStr})`);
+            playAudioFeedback(personName);
+        }
+
+        // --- 6. Feedback (Audio & Visual) ---
+        function flashCamera(type) {
+            const wrapper = document.getElementById("camera-wrapper");
+            wrapper.classList.remove("success-flash", "warn-flash");
+            void wrapper.offsetWidth; // trigger reflow
+            wrapper.classList.add(type === "success" ? "success-flash" : "warn-flash");
+            setTimeout(() => {
+                wrapper.classList.remove("success-flash", "warn-flash");
+            }, 1000);
+        }
+
+        let toastTimer = null;
+        function showToast(type, title, desc) {
+            const toast = document.getElementById("toast-banner");
+            const toastTitle = document.getElementById("toast-title");
+            const toastDesc = document.getElementById("toast-desc");
+            const toastIcon = document.getElementById("toast-icon");
+
+            toast.className = `toast-banner show ${type}`;
+            toastTitle.textContent = title;
+            toastDesc.textContent = desc;
+            toastIcon.textContent = type === "success" ? "🎉" : "⏳";
+
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {
+                toast.classList.remove("show");
+            }, 3500);
+        }
+
+        function playAudioFeedback(name) {
+            if (!isSoundEnabled) return;
+
+            // 1. Play crystal clear pleasant chime (Web Audio API)
+            playChimeSound();
+
+            // 2. Synthesize Speech in Thai (Web Speech API)
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(`เช็คชื่อสำเร็จ ยินดีต้อนรับคุณ ${name} ค่ะ`);
+                utterance.lang = 'th-TH';
+                utterance.rate = 1.05;
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        function playChimeSound() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                
+                // Two-tone upbeat chime (D5 -> A5)
+                osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12);
+                
+                gain.gain.setValueAtTime(0.25, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
+                
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.45);
+            } catch (e) {
+                console.warn("Audio Context chime failed:", e);
+            }
+        }
+
+        function toggleSound() {
+            isSoundEnabled = !isSoundEnabled;
+            const btn = document.getElementById("btn-sound");
+            btn.innerHTML = isSoundEnabled ? "🔊 เสียง: เปิด" : "🔇 เสียง: ปิด";
+        }
+
+        // --- 7. Settings Updates ---
+        function updateCooldown(val) {
+            cooldownMinutes = parseFloat(val);
+        }
+
+        function updateThreshold(val) {
+            confidenceThreshold = parseFloat(val);
+        }
+
+        // --- 8. Data Storage & Management ---
+        function loadRecords() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                records = raw ? JSON.parse(raw) : [];
+                // Reconstruct last checked times
+                records.forEach(r => {
+                    if (!lastCheckedMap[r.name] || r.id > lastCheckedMap[r.name]) {
+                        lastCheckedMap[r.name] = r.id;
+                    }
+                });
+            } catch (e) {
+                records = [];
+            }
+        }
+
+        function saveRecords() {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById("attendance-tbody");
+            const emptyState = document.getElementById("empty-state");
+
+            tbody.innerHTML = "";
+            if (records.length === 0) {
+                emptyState.style.display = "block";
+                return;
+            }
+            emptyState.style.display = "none";
+
+            records.forEach((r, idx) => {
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                    <td style="color: var(--text-muted);">${records.length - idx}</td>
+                    <td>
+                        <span class="name-badge">
+                            👤 ${r.name}
+                        </span>
+                    </td>
+                    <td>${r.date}</td>
+                    <td style="font-weight: 500;">${r.time}</td>
+                    <td>
+                        <span class="confidence-tag">${r.confidence}%</span>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function updateStats() {
+            document.getElementById("stat-total-count").textContent = records.length;
+            if (records.length > 0) {
+                const latest = records[0];
+                document.getElementById("stat-last-person").textContent = latest.name;
+                document.getElementById("stat-last-time").textContent = `${latest.time} น.`;
+            } else {
+                document.getElementById("stat-last-person").textContent = "-";
+                document.getElementById("stat-last-time").textContent = "คนล่าสุด";
+            }
+        }
+
+        // Export to UTF-8 CSV with BOM for Microsoft Excel compatibility
+        function exportToCSV() {
+            if (records.length === 0) {
+                alert("ยังไม่มีประวัติการเช็คชื่อให้ส่งออก");
+                return;
+            }
+
+            let csvContent = "\uFEFF"; // UTF-8 BOM for Thai language in Excel
+            csvContent += "ลำดับ,ชื่อ-นามสกุล,วันที่,เวลา,ความแม่นยำ (%)\n";
+
+            records.forEach((r, idx) => {
+                csvContent += `"${records.length - idx}","${r.name}","${r.date}","${r.time}","${r.confidence}"\n`;
+            });
+
+            const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            const now = new Date().toISOString().slice(0, 10);
+            a.setAttribute("href", url);
+            a.setAttribute("download", `attendance_report_${now}.csv`);
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function clearAllRecords() {
+            if (records.length === 0) return;
+            if (confirm("คุณแน่ใจหรือไม่ว่าต้องการล้างประวัติการเช็คชื่อทั้งหมด?")) {
+                records = [];
+                lastCheckedMap = {};
+                saveRecords();
+                renderTable();
+                updateStats();
+            }
+        }
+    </script>
+</body>
+</html>
